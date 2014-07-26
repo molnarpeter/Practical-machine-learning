@@ -1,0 +1,263 @@
+---
+title: "Practical ML"
+author: "Péter Molnár"
+date: "Saturday, July 26, 2014"
+output: html_document
+---
+
+Loading the Caret package and the dataset with the option that specify which values should be interpret as NA values
+
+
+```
+library("caret")
+
+raw_data <- read.csv("pml-training.csv", na.strings=c("","NA","#DIV/0"))
+
+View(raw_data)`
+```
+
+
+
+As it can be seen the first seven column of the dataset contain information which are not to be used for prediction that's they should be removed:
+
+```
+data <- raw_data[,8:160]
+```
+
+Still, there are 153 varibale, so the exploratory data analysis would be very hard, fortunately it can be noticed easily that there many variables with a lot of NA's and with values equal for all or almost all observations. To select the variables in which there is variance, one can use the nearZeroVar command.
+
+```
+poss_preds <- nearZeroVar(data,saveMetrics=TRUE)[nearZeroVar(data,saveMetrics=TRUE)[,"zeroVar"] == FALSE,]
+
+names <- row.names(poss_preds)
+
+Selecting variables with variance:
+
+predictors <- data[, names]
+```
+
+Still there are variables which has NA values, and they will be filtered as well:
+
+```
+full_predictors <- (apply(predictors, 2, function(x) { sum(is.na(x)) }) == 0)
+
+full_predictors <- as.list(full_predictors[full_predictors == TRUE])
+
+fin_predictors <- predictors[,names(full_predictors)]
+```
+
+Now the preliminary data manipulation is ready, the next stage is data partition for the crossvalidation. The seed is set because of the reproducibilty issues.
+
+```
+set.seed(1989)
+partition = createDataPartition(fin_predictors$classe, p=0.8, list=FALSE)
+training_set = fin_predictors[partition,]
+test_set = fin_predictors[-partition,]
+```
+
+So the database is fairly large and there is 52 predictors left which is a lot as well. Therefore the possible methods are (in my opinion): 
+
+- classification tree 
+- regularized regression 
+- random forest 
+
+these methods can handle the selection of the relevant variables. I suspect that the random forest will be the best predictor, but the others are computationaly cheaper.
+
+Another way could be to compress the data with principal component analysis (PCA) but I don't really prefer that method due to the loss of information.
+
+First I tried a simple classification tree. I didn't expect much from it. But at least it is computationaly cheap.
+
+```
+model_cart <- train(classe ~ ., data = training_set, method = "rpart", prox = TRUE, trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+
+prediction_cart <- predict(model_cart, newdata=test_set)
+
+cM_test_cart <- confusionMatrix(prediction_cart, test_set$classe)
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1012  338  322  284   98
+         B   22  234   17  104   94
+         C   80  187  345  255  204
+         D    0    0    0    0    0
+         E    2    0    0    0  325
+
+Overall Statistics
+                                          
+               Accuracy : 0.4884          
+                 95% CI : (0.4726, 0.5042)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.3312          
+ Mcnemar's Test P-Value : NA              
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9068  0.30830  0.50439   0.0000  0.45076
+Specificity            0.6288  0.92509  0.77586   1.0000  0.99938
+Pos Pred Value         0.4927  0.49682  0.32213      NaN  0.99388
+Neg Pred Value         0.9444  0.84791  0.88114   0.8361  0.88988
+Prevalence             0.2845  0.19347  0.17436   0.1639  0.18379
+Detection Rate         0.2580  0.05965  0.08794   0.0000  0.08284
+Detection Prevalence   0.5236  0.12006  0.27301   0.0000  0.08335
+Balanced Accuracy      0.7678  0.61670  0.64012   0.5000  0.72507
+```
+As expected the model isn't effective, it classifield less then the half of the cases correct, and none of classe D. So I need to try other methods.
+
+Next I try a penalized multinominal regression. The advantage of this method is that it penalize the use of variables that are not relevant, so it helps to prevenet overfitting.
+
+```
+model_multinom <- train(classe ~ ., data = training_set, method = "multinom", prox = TRUE, trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+
+prediction_multinom <- predict(model_multinom, newdata=test_set)
+
+cM_test_multinom <- confusionMatrix(prediction_multinom, test_set$classe)
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction   A   B   C   D   E
+         A 898 131  82  69  43
+         B  61 405  65  19  73
+         C  95  63 419  87  68
+         D  28  51  39 430  86
+         E  34 109  79  38 451
+
+Overall Statistics
+                                          
+               Accuracy : 0.6635          
+                 95% CI : (0.6485, 0.6783)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.5731          
+ Mcnemar's Test P-Value : < 2.2e-16       
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.8047   0.5336   0.6126   0.6687   0.6255
+Specificity            0.8842   0.9311   0.9034   0.9378   0.9188
+Pos Pred Value         0.7343   0.6501   0.5724   0.6782   0.6343
+Neg Pred Value         0.9193   0.8927   0.9170   0.9352   0.9159
+Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+Detection Rate         0.2289   0.1032   0.1068   0.1096   0.1150
+Detection Prevalence   0.3118   0.1588   0.1866   0.1616   0.1812
+Balanced Accuracy      0.8444   0.7323   0.7580   0.8033   0.7722
+```
+The accuracy of this model is better, but still it isn't the best. Note that for classe B the sensitivity of the model is much lower. Next I tried outa generalized linear model from the glmnet package, because it has a more sophisticated method for regulation.
+
+```
+model_glmnet <- train(classe ~ ., data = training_set, method = "glmnet", prox = TRUE, trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+
+prediction_glmnet <- predict(model_glmnet, newdata=test_set)
+
+cM_test_glmnet <- confusionMatrix(prediction_glmnet, test_set$classe)
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction   A   B   C   D   E
+         A 835 259 297  89 112
+         B  67 322  52  66 143
+         C  57  96 273  61  80
+         D 136  52  31 373  62
+         E  21  30  31  54 324
+
+Overall Statistics
+                                          
+               Accuracy : 0.5422          
+                 95% CI : (0.5264, 0.5579)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.4119          
+ Mcnemar's Test P-Value : < 2.2e-16       
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.7482  0.42424  0.39912  0.58009  0.44938
+Specificity            0.7303  0.89633  0.90923  0.91433  0.95753
+Pos Pred Value         0.5245  0.49538  0.48148  0.57034  0.70435
+Neg Pred Value         0.8795  0.86648  0.87753  0.91741  0.88536
+Prevalence             0.2845  0.19347  0.17436  0.16391  0.18379
+Detection Rate         0.2128  0.08208  0.06959  0.09508  0.08259
+Detection Prevalence   0.4058  0.16569  0.14453  0.16671  0.11726
+Balanced Accuracy      0.7393  0.66029  0.65418  0.74721  0.70345
+```
+This model is worse than the previous one. I tried to avoid the use of random forest, because my computer is not suitable to run the algorithm on such a large data set but after seeing these poor result, I had to give it a try.
+
+```
+model_rf <- train(classe ~ ., data = training_set, method = "rf", prox = TRUE, trControl = trainControl(method = "cv", number = 4, allowParallel = TRUE))
+
+prediction_rf <- predict(model_rf, newdata=test_set)
+
+cM_test_rf <- confusionMatrix(prediction_rf, test_set$classe)
+```
+
+```
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1114    1    0    0    0
+         B    2  757    1    1    1
+         C    0    1  683    5    0
+         D    0    0    0  637    0
+         E    0    0    0    0  720
+
+Overall Statistics
+                                          
+               Accuracy : 0.9969          
+                 95% CI : (0.9947, 0.9984)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9961          
+ Mcnemar's Test P-Value : NA              
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9982   0.9974   0.9985   0.9907   0.9986
+Specificity            0.9996   0.9984   0.9981   1.0000   1.0000
+Pos Pred Value         0.9991   0.9934   0.9913   1.0000   1.0000
+Neg Pred Value         0.9993   0.9994   0.9997   0.9982   0.9997
+Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+Detection Rate         0.2840   0.1930   0.1741   0.1624   0.1835
+Detection Prevalence   0.2842   0.1942   0.1756   0.1624   0.1835
+Balanced Accuracy      0.9989   0.9979   0.9983   0.9953   0.9993
+```
+As it can be seen the random forest proved to be the best solution for the assignment. It classified almost all case right in my test set. So I used random forest for the predicition task as well.
+
+```
+raw_test <- read.csv("pml-testing.csv", na.strings=c("","NA","#DIV/0"))
+
+test_predictors <- raw_test[,names(full_predictors[1:52])]
+
+test_predictions <- predict(model_rf, newdata = test_predictors)
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(test_predictions)
+```
+I achieved 20/20 on the assignment so random forest was a suitable method for this project.
+
+

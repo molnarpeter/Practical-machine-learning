@@ -1,3 +1,5 @@
 Practical-machine-learning
 ==========================
-This is the readme file for the practical machine learning course project
+Here you can see the rendered html documentation:
+
+https://cdn.rawgit.com/molnarpeter/Practical-machine-learning/files/pml_project.html
